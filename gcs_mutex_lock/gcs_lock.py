@@ -21,6 +21,7 @@ def lock(lock_path):
     except CalledProcessError as e:
         logging.debug("Cannot acquire lock: {}".format(lock_path))
         logging.debug("{}".format(repr(e)))
+        logging.debug("{}".format(e.stdout))
         return False
 
 
