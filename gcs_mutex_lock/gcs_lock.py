@@ -1,42 +1,44 @@
 from subprocess import check_output, Popen, PIPE, STDOUT, CalledProcessError
+from google.cloud.exceptions import GoogleCloudError
 import backoff
 import logging
 import traceback
+from google.cloud import storage
 
 
-def lock(lock_path):
+def lock(bucket_name, lock_file, content="lock"):
     """
     Creates a lock with the specified GCS path.
     :param lock_path: the lock's GCS path with the gs://bucket-name/file-name format
     :return: boolean, if lock acquired or not
     """
-    logging.debug("Acquiring lock: {}".format(lock_path))
-    echo = Popen('echo "lock"', shell=True, stdout=PIPE)
+    logging.debug("Acquiring lock: {}".format(lock_file))
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(lock_file)
     try:
-        gsutil_command = 'gsutil -q -h "x-goog-if-generation-match:0" cp - {}'.format(lock_path)
-        check_output(gsutil_command, stdin=echo.stdout, shell=True, stderr=STDOUT)
-        echo.wait()
-        logging.debug("Lock acquired: {}".format(lock_path))
+        logging.debug("Lock acquired: {}".format(lock_file))
+        blob.upload_from_string(content, if_generation_match=0)
         return True
-    except CalledProcessError as e:
-        logging.debug("Cannot acquire lock: {}".format(lock_path))
+    except GoogleCloudError as e:
+        logging.debug("Cannot acquire lock: {}".format(lock_file))
         logging.debug("{}".format(repr(e)))
-        logging.debug("{}".format(e.stdout))
         return False
 
-
-def unlock(lock_path):
+def unlock(bucket_name, lock_file):
     """
     Releases the specified lock.
     :param lock_path: the lock's GCS path with the gs://bucket-name/file-name format
     :return: None
     """
-    gsutil_command = 'gsutil -q rm {}'.format(lock_path)
-    check_output(gsutil_command, shell=True, stderr=STDOUT)
-    logging.debug("Lock released: {}".format(lock_path))
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(lock_file)
+    blob.delete()
+    logging.debug("Lock released: {}".format(lock_file))
 
 
-def wait_for_lock(lock_path, *backoff_args, **backoff_kwargs):
+def wait_for_lock(bucket_name, lock_file, content, *backoff_args, **backoff_kwargs):
     """
     Tries to acquire the specified lock. If the lock cannot be acquired, waits for the lock to be freed.
     :param lock_path: the lock's GCS path with the gs://bucket-name/file-name format
@@ -47,12 +49,12 @@ def wait_for_lock(lock_path, *backoff_args, **backoff_kwargs):
 
     @backoff.on_predicate(*backoff_args, **backoff_kwargs)
     def backoff_lock():
-        return lock(lock_path)
+        return lock(bucket_name, lock_file, content)
 
     return backoff_lock()
 
 
-def wait_for_lock_expo(lock_path, base=2, factor=1, max_value=10, max_time=60, jitter=backoff.full_jitter, *args,
+def wait_for_lock_expo(bucket_name, lock_file, content="lock", base=2, factor=1, max_value=10, max_time=60, jitter=backoff.full_jitter, *args,
                        **kwargs):
     """
     A helper function for `wait_for_lock` that uses exponential backoff.
@@ -64,5 +66,5 @@ def wait_for_lock_expo(lock_path, base=2, factor=1, max_value=10, max_time=60, j
     :param jitter: See backoff.on_predicate for details. Pass jitter=None for no jitter.
     :return: If the lock was acquired or not
     """
-    return wait_for_lock(lock_path, wait_gen=backoff.expo, base=base, factor=factor, max_value=max_value,
+    return wait_for_lock(bucket_name, lock_file, content, wait_gen=backoff.expo, base=base, factor=factor, max_value=max_value,
                          max_time=max_time, jitter=jitter, *args, **kwargs)
