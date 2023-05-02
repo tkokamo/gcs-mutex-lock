@@ -1,6 +1,7 @@
 from subprocess import check_output, Popen, PIPE, STDOUT, CalledProcessError
 import backoff
 import logging
+import traceback
 
 
 def lock(lock_path):
@@ -17,8 +18,9 @@ def lock(lock_path):
         echo.wait()
         logging.debug("Lock acquired: {}".format(lock_path))
         return True
-    except CalledProcessError:
+    except CalledProcessError as e:
         logging.debug("Cannot acquire lock: {}".format(lock_path))
+        logging.debug("{}".format(repr(e)))
         return False
 
 
